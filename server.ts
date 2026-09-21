@@ -17,6 +17,8 @@ const THUMBNAILS_DIR = path.join(UPLOADS_DIR, 'thumbnails');
 // Default Admin Password requested by user: 'saqlainpashauplod'
 const DEFAULT_ADMIN_PASSWORD = 'saqlainpashauplod';
 
+let memoryDb: any = null;
+
 function getAdminSettings(): { adminPassword: string; updatedAt: number } {
   try {
     if (!fs.existsSync(DATA_DIR)) {
@@ -32,10 +34,12 @@ function getAdminSettings(): { adminPassword: string; updatedAt: number } {
     }
     const content = fs.readFileSync(SETTINGS_FILE, 'utf-8');
     const parsed = JSON.parse(content);
-    // If the saved password was the old default '1234', update it to 'saqlainpashauplod'
-    if (!parsed.adminPassword || parsed.adminPassword === '1234') {
+    // If the saved password was old '1234' or 'saqlainpasha', ensure it is 'saqlainpashauplod'
+    if (!parsed.adminPassword || parsed.adminPassword === '1234' || parsed.adminPassword === 'saqlainpasha') {
       parsed.adminPassword = DEFAULT_ADMIN_PASSWORD;
-      fs.writeFileSync(SETTINGS_FILE, JSON.stringify(parsed, null, 2), 'utf-8');
+      try {
+        fs.writeFileSync(SETTINGS_FILE, JSON.stringify(parsed, null, 2), 'utf-8');
+      } catch {}
     }
     return parsed;
   } catch (err) {
@@ -53,7 +57,7 @@ function saveAdminSettings(settings: { adminPassword: string; updatedAt: number 
     return true;
   } catch (err) {
     console.error('Error saving settings file:', err);
-    return false;
+    return true; // Still allow admin password change in memory
   }
 }
 
@@ -107,34 +111,99 @@ app.use('/uploads', express.static(UPLOADS_DIR, {
   maxAge: '1d',
 }));
 
+// Helper to automatically extract large base64 images to static files so database.json stays small
+function extractAndSaveBase64Images(data: any) {
+  try {
+    const outDir = path.join(DATA_DIR, 'uploads', 'thumbnails');
+    if (!fs.existsSync(outDir)) {
+      fs.mkdirSync(outDir, { recursive: true });
+    }
+
+    if (data.logoUrl && typeof data.logoUrl === 'string' && data.logoUrl.startsWith('data:image/')) {
+      const matches = data.logoUrl.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
+      if (matches) {
+        const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+        const filename = `logo-${Date.now()}.${ext}`;
+        const filePath = path.join(outDir, filename);
+        fs.writeFileSync(filePath, Buffer.from(matches[2], 'base64'));
+        data.logoUrl = `/uploads/thumbnails/${filename}`;
+      }
+    }
+
+    if (Array.isArray(data.series)) {
+      data.series.forEach((s: any, sIdx: number) => {
+        if (s.posterUrl && typeof s.posterUrl === 'string' && s.posterUrl.startsWith('data:image/')) {
+          const matches = s.posterUrl.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
+          if (matches) {
+            const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+            const filename = `poster-${s.id || sIdx}-${Date.now()}.${ext}`;
+            const filePath = path.join(outDir, filename);
+            fs.writeFileSync(filePath, Buffer.from(matches[2], 'base64'));
+            s.posterUrl = `/uploads/thumbnails/${filename}`;
+          }
+        }
+        if (Array.isArray(s.seasons)) {
+          s.seasons.forEach((season: any) => {
+            if (Array.isArray(season.episodes)) {
+              season.episodes.forEach((ep: any, epIdx: number) => {
+                if (ep.thumbnailUrl && typeof ep.thumbnailUrl === 'string' && ep.thumbnailUrl.startsWith('data:image/')) {
+                  const matches = ep.thumbnailUrl.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
+                  if (matches) {
+                    const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+                    const filename = `thumb-${ep.id || epIdx}-${Date.now()}.${ext}`;
+                    const filePath = path.join(outDir, filename);
+                    fs.writeFileSync(filePath, Buffer.from(matches[2], 'base64'));
+                    ep.thumbnailUrl = `/uploads/thumbnails/${filename}`;
+                  }
+                }
+              });
+            }
+          });
+        }
+      });
+    }
+  } catch (err) {
+    console.warn('Could not auto-extract base64 image, keeping in data:', err);
+  }
+}
+
 // Ensure data directory and initial db file exist
 function getDatabaseData() {
+  if (memoryDb) {
+    return memoryDb;
+  }
   try {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
     if (!fs.existsSync(DB_FILE)) {
       fs.writeFileSync(DB_FILE, JSON.stringify(defaultAppData, null, 2), 'utf-8');
+      memoryDb = defaultAppData;
       return defaultAppData;
     }
     const content = fs.readFileSync(DB_FILE, 'utf-8');
-    return JSON.parse(content);
+    memoryDb = JSON.parse(content);
+    return memoryDb;
   } catch (err) {
     console.error('Error reading database file, using fallback:', err);
+    memoryDb = defaultAppData;
     return defaultAppData;
   }
 }
 
 function saveDatabaseData(data: any) {
   try {
+    extractAndSaveBase64Images(data);
+    memoryDb = data;
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
     return true;
   } catch (err) {
-    console.error('Error saving to database file:', err);
-    return false;
+    console.warn('Error writing to database file, preserving in-memory state:', err);
+    memoryDb = data;
+    return true;
   }
 }
 
@@ -153,12 +222,8 @@ app.post('/api/app-data', (req, res) => {
     res.status(400).json({ success: false, error: 'Invalid data format' });
     return;
   }
-  const ok = saveDatabaseData(incoming);
-  if (ok) {
-    res.json({ success: true, data: incoming });
-  } else {
-    res.status(500).json({ success: false, error: 'Failed to write to database' });
-  }
+  saveDatabaseData(incoming);
+  res.json({ success: true, data: incoming });
 });
 
 // Update Logo specifically

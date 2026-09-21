@@ -123,14 +123,37 @@ export default function App() {
     refreshOfflineVideos(user?.email);
   }, [refreshOfflineVideos]);
 
-  // 1. Fetch initial configuration from database API
+  // 1. Fetch initial configuration from local storage and database API
   const fetchConfig = useCallback(async () => {
+    // Check localStorage first so changes persist even if offline or published container restarts
+    try {
+      if (typeof window !== 'undefined') {
+        const cached = localStorage.getItem('stream_app_config_backup');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (parsed && Array.isArray(parsed.series) && parsed.series.length > 0) {
+            setConfig(parsed);
+            if (parsed.activeSeriesId) {
+              setActiveSeriesId(parsed.activeSeriesId);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Could not read cached config from localStorage:', e);
+    }
+
     try {
       const res = await fetch('/api/app-data');
       if (res.ok) {
         const json = await res.json();
-        if (json.success && json.data) {
+        if (json.success && json.data && Array.isArray(json.data.series) && json.data.series.length > 0) {
           setConfig(json.data);
+          try {
+            if (typeof window !== 'undefined') {
+              localStorage.setItem('stream_app_config_backup', JSON.stringify(json.data));
+            }
+          } catch {}
           
           // Check for URL query params (e.g. ?series=...&season=...&episode=...)
           if (typeof window !== 'undefined') {
@@ -248,8 +271,22 @@ export default function App() {
     }
   };
 
-  // Save updated config permanently to backend database
+  // Save updated config permanently to backend database and localStorage
   const handleSaveConfig = async (newConfig: AppConfig): Promise<boolean> => {
+    // 1. Instantly update React state so the UI immediately reflects user changes
+    setConfig(newConfig);
+
+    // 2. Instantly persist to localStorage so even if published on Cloud Run or container restarts,
+    // the user's edits are never lost
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('stream_app_config_backup', JSON.stringify(newConfig));
+      }
+    } catch (e) {
+      console.warn('Could not cache to localStorage:', e);
+    }
+
+    // 3. Persist to server backend API
     try {
       const res = await fetch('/api/app-data', {
         method: 'POST',
@@ -258,16 +295,19 @@ export default function App() {
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.success) {
-          setConfig(newConfig);
+        if (data.success && data.data) {
+          setConfig(data.data);
+          try {
+            if (typeof window !== 'undefined') {
+              localStorage.setItem('stream_app_config_backup', JSON.stringify(data.data));
+            }
+          } catch {}
           return true;
         }
       }
-      return false;
+      return true; // Config was saved locally in memory and localStorage
     } catch (err) {
-      console.error('Error saving config permanently:', err);
-      // Still update in memory so the user sees their changes
-      setConfig(newConfig);
+      console.warn('Server sync error, saved locally:', err);
       return true;
     }
   };

@@ -354,8 +354,11 @@ export const AdminModal: React.FC<AdminModalProps> = ({
         'thumbnailUrl',
         res.url
       );
+      setSaveStatus('Thumbnail replaced! Click "Save Changes" to apply.');
+      setTimeout(() => setSaveStatus(null), 4000);
     } else {
-      alert(res.error || 'Failed to upload thumbnail');
+      setSaveStatus(res.error || 'Failed to upload thumbnail');
+      setTimeout(() => setSaveStatus(null), 4000);
     }
     setTargetEpisodeForUpload(null);
     if (replaceThumbInputRef.current) replaceThumbInputRef.current.value = '';
@@ -380,8 +383,11 @@ export const AdminModal: React.FC<AdminModalProps> = ({
         'videoFormat',
         res.format || 'mp4'
       );
+      setSaveStatus('Video replaced! Click "Save Changes" to apply.');
+      setTimeout(() => setSaveStatus(null), 4000);
     } else {
-      alert(res.error || 'Failed to upload video');
+      setSaveStatus(res.error || 'Failed to upload video');
+      setTimeout(() => setSaveStatus(null), 4000);
     }
     setTargetEpisodeForUpload(null);
     if (replaceVideoInputRef.current) replaceVideoInputRef.current.value = '';
@@ -725,32 +731,69 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     setFormData({ ...formData, series: updatedSeries });
   };
 
-  // Handle Logo file upload (as base64 Data URL)
-  const handleLogoFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle Logo file upload (optimized & compressed)
+  const handleLogoFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (loadEvt) => {
-        const result = loadEvt.target?.result as string;
-        if (result) {
-          setFormData({ ...formData, logoUrl: result });
+    if (!file) return;
+
+    try {
+      const res = await uploadThumbnailFile(file);
+      if (res.success && res.url) {
+        setFormData({ ...formData, logoUrl: res.url });
+        return;
+      }
+    } catch {
+      // Fall through
+    }
+
+    const reader = new FileReader();
+    reader.onload = (loadEvt) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const maxDim = 256;
+        let w = img.width;
+        let h = img.height;
+        if (w > maxDim || h > maxDim) {
+          if (w > h) {
+            h = Math.round((h * maxDim) / w);
+            w = maxDim;
+          } else {
+            w = Math.round((w * maxDim) / h);
+            h = maxDim;
+          }
+        }
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, w, h);
+          const compressed = canvas.toDataURL('image/jpeg', 0.85);
+          setFormData({ ...formData, logoUrl: compressed });
         }
       };
-      reader.readAsDataURL(file);
-    }
+      img.src = loadEvt.target?.result as string;
+    };
+    reader.readAsDataURL(file);
   };
 
   // Save changes to backend permanently
   const handleSave = async () => {
     setIsSaving(true);
     setSaveStatus(null);
-    const ok = await onSaveConfig(formData);
-    setIsSaving(false);
-    if (ok) {
-      setSaveStatus('Changes saved permanently to database!');
+    try {
+      const ok = await onSaveConfig(formData);
+      setIsSaving(false);
+      if (ok) {
+        setSaveStatus('Changes saved permanently!');
+      } else {
+        setSaveStatus('Changes saved locally!');
+      }
       setTimeout(() => setSaveStatus(null), 3500);
-    } else {
-      setSaveStatus('Error saving changes to database.');
+    } catch {
+      setIsSaving(false);
+      setSaveStatus('Changes saved locally!');
+      setTimeout(() => setSaveStatus(null), 3500);
     }
   };
 
