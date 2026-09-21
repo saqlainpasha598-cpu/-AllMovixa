@@ -228,7 +228,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
   // Active season object
   const currentSeason =
-    activeSeries?.seasons.find((s) => s.id === selectedSeasonId) || activeSeries?.seasons[0];
+    activeSeries?.seasons?.find((s) => s.id === selectedSeasonId) || activeSeries?.seasons?.[0];
 
   // Handler: User selects a video file from their PC
   const handleVideoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {

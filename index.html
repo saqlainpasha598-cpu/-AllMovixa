@@ -9,6 +9,80 @@
     <meta property="og:description" content="A clean, modern video streaming website with series and episode support, multi-format playback (MP4, WebM, HLS, DASH), and content management." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
+    <script>
+      // Silence benign [vite] websocket / HMR warnings in AI Studio preview sandbox
+      (function() {
+        // 1. Mock Vite HMR WebSocket so the browser never attempts connection to closed ports
+        if (typeof window !== 'undefined' && window.WebSocket) {
+          const NativeWebSocket = window.WebSocket;
+          function ViteHMRMockSocket(url, protocols) {
+            const isViteHMR = protocols === 'vite-hmr' ||
+              (Array.isArray(protocols) && protocols.includes('vite-hmr')) ||
+              (typeof url === 'string' && (url.includes('24678') || url.includes('/@vite/')));
+            if (isViteHMR) {
+              const emitter = new EventTarget();
+              emitter.url = url;
+              emitter.readyState = 3; // CLOSED
+              emitter.bufferedAmount = 0;
+              emitter.extensions = '';
+              emitter.protocol = 'vite-hmr';
+              emitter.binaryType = 'blob';
+              emitter.send = function() {};
+              emitter.close = function() {};
+              emitter.onopen = null;
+              emitter.onclose = null;
+              emitter.onerror = null;
+              emitter.onmessage = null;
+              return emitter;
+            }
+            return new NativeWebSocket(url, protocols);
+          }
+          ViteHMRMockSocket.prototype = NativeWebSocket.prototype;
+          ViteHMRMockSocket.CONNECTING = 0;
+          ViteHMRMockSocket.OPEN = 1;
+          ViteHMRMockSocket.CLOSING = 2;
+          ViteHMRMockSocket.CLOSED = 3;
+          window.WebSocket = ViteHMRMockSocket;
+        }
+
+        // 2. Filter console.error and console.warn for any remaining [vite] notices
+        const origConsoleError = console.error;
+        const origConsoleWarn = console.warn;
+        function isVite(args) {
+          try {
+            const str = args.map(a => (typeof a === 'object' && a !== null ? JSON.stringify(a) : String(a))).join(' ');
+            return str.includes('[vite]') || str.includes('vite-hmr') || str.includes('WebSocket') || str.includes('24678');
+          } catch {
+            return false;
+          }
+        }
+        console.error = function(...args) {
+          if (isVite(args)) return;
+          origConsoleError.apply(console, args);
+        };
+        console.warn = function(...args) {
+          if (isVite(args)) return;
+          origConsoleWarn.apply(console, args);
+        };
+
+        // 3. Prevent uncaught error bubbling for vite client events
+        window.addEventListener('error', function(event) {
+          if (event && (
+            (typeof event.message === 'string' && event.message.includes('[vite]')) ||
+            (typeof event.filename === 'string' && event.filename.includes('vite/client'))
+          )) {
+            event.stopImmediatePropagation();
+            event.preventDefault();
+          }
+        }, true);
+        window.addEventListener('unhandledrejection', function(event) {
+          if (event && event.reason && String(event.reason).includes('[vite]')) {
+            event.stopImmediatePropagation();
+            event.preventDefault();
+          }
+        }, true);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

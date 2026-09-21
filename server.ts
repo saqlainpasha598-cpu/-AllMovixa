@@ -617,7 +617,10 @@ app.get('/api/health', (req, res) => {
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false, // HMR is disabled in AI Studio to prevent flickering and benign websocket errors
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
