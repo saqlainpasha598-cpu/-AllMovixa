@@ -1,0 +1,6 @@
+{
+  "name": "Video Stream Player",
+  "description": "A clean, modern video streaming website with series and episode support, multi-format playback (MP4, WebM, HLS, DASH), and content management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
